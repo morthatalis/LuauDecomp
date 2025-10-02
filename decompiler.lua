@@ -447,9 +447,9 @@ function module.decompileluac(bytecode)
 	local funcend = false --just for functions/protos
 	local iselse = false
 	local iselseif = false
-	--TODO: MAKE ANOTHER TABLE TO CHECK ELSEIFS
 	local requirecall = "" --my code doesnt work good with require for somereason and cuz doing it like this makes requires look cleaner
 	local requirebool = false --is require being used? (only really needed for CALL)
+	local importname = ""
 	local retval = [[
 ]]
 	print("lines:",#lines)
@@ -514,7 +514,7 @@ function module.decompileluac(bytecode)
 				local bool = (arg2 == "1")
 				reg[arg1] = bool
 				retval = retval ..  arg1 .. " = " .. tostring(bool)
-
+		
 			elseif op == "SETTABLEKS" then
 				local arg1 = word[2]
 				local arg2 = tostring(word[3])
@@ -529,21 +529,42 @@ function module.decompileluac(bytecode)
 					reg[arg1] = string.sub(arg3, 2, #arg3-1)
 				elseif convregarg2 == "nil" then
 					reg[arg1] = string.sub(arg3,2,#arg3-1)
+					
 				else
-					reg[arg1] =  "RT"..reg[arg2] .. arg3
+					reg[arg1] =  "RT"..tostring(reg[arg2]) ..tostring(arg3)
 				end
 				retval = retval .. arg1 .. " = " .. arg2 .. arg3
 
 			elseif op == "GETIMPORT" then
 				local arg1 = word[2]
 				local arg2 = word[4]
-				if string.sub(arg2,2,#arg2 - 1) ~= "require" then
+				--if string.sub(arg2,2,#arg2 - 1) ~= "require" then
+				--	reg[arg1] =  "IM"..string.sub(arg2,2,#arg2-1) 
+				--	retval = retval ..  arg1 .. " = " .. string.sub(arg2,2,#arg2 - 1)
+				--else
+				local val = string.sub(arg2, 2, #arg2 - 1)
+
+				local blacklist = {
+					Enum = true,
+					game = true,
+					plugin = true,
+					shared = true,
+					script = true,
+					workspace = true,
+				}
+				
+				--print(string.sub(arg2,2,#arg2 - 1) == ("Enum" or "game" or "plugin" or "shared" or "script" or "workspace"), string.sub(arg2,2,#arg2 - 1))
+				if not blacklist[val] then
+					reg[arg1] =  "IM"..string.sub(arg2,2,#arg2-1)
+					requirebool = true
+				requirecall = ""
+				importname = string.sub(arg2,2,#arg2 - 1)
+						noline = true
+				else
 					reg[arg1] =  "IM"..string.sub(arg2,2,#arg2-1) 
 					retval = retval ..  arg1 .. " = " .. string.sub(arg2,2,#arg2 - 1)
-				else
-					requirebool = true
+					requirebool = false
 					requirecall = ""
-					noline = true
 				end
 				
 			elseif op == "GETTABLEKS" then
@@ -558,6 +579,7 @@ function module.decompileluac(bytecode)
 					noline = true
 				end
 				--doesnt really matter if we do the check here
+				
 				if requirecall == "" then
 					requirecall = requirecall .. arg2 .. arg3
 				else
@@ -581,7 +603,7 @@ function module.decompileluac(bytecode)
 				-- build arguments (normal/namecall only)
 				local args = {}
 				if B >= 1 then
-					for i = 2, B do
+					for i = 1, B do
 						table.insert(args, "R" .. tostring(A + i))
 					end
 				elseif B == 0 then
@@ -593,7 +615,7 @@ function module.decompileluac(bytecode)
 				if requirebool then
 					-- Special handling for require
 					requirebool = false
-					callStr = "require(" .. requirecall .. ")"
+					callStr = importname .."(" .. requirecall .. ")"
 				elseif namecall then
 					-- Method call
 					namecall = false
@@ -669,10 +691,24 @@ function module.decompileluac(bytecode)
 				--DUPTABLE R1 K4 [{"getTheme", "isDarkerTheme", "themeChanged"}]
 				local tablea = string.sub(line,garb,#line - 1)
 				reg[arg1] =  tablea --cant see type, if you try type() on it, it'd just return as string
+				if requirebool == false then
 				retval = retval ..  arg1 .. " = " .. tablea
+				else
+					requirecall = requirecall .. tablea
+				end
+				
 				--local arg1 = word[2]
 				--local arg2 = string.sub(word[4],2,#word[4]-1)
 				--retval = retval ..  arg1 .. " = " .. arg2
+			elseif op == "SETGLOBAL" then
+				local arg1 = word[2]
+				local arg2 = word[4]
+
+				local garb = #("SETGLOBAL "..arg1.. " as[" .. word[3])
+				--DUPTABLE R1 K4 [{"getTheme", "isDarkerTheme", "themeChanged"}]
+				local tablea = string.sub(line,garb,#line - 1)
+				reg[arg1] =  tablea --cant see type, if you try type() on it, it'd just return as string
+				retval = retval ..  arg1 .. " = " .. tablea
 			elseif op == "JUMPIFLT" then
 				local arg1 = word[2]
 				local arg2 = word[4]
@@ -881,13 +917,12 @@ function module.decompileluac(bytecode)
 					-- i dont wanna do this :sob:
 				end
 				if string.sub(re, 1, 1) == "[" then
-					print('aasdaasd')
 					local b = string.find(reg[arg2],"%[")
 					re = string.sub(reg[arg2], b+1, #reg[arg2]-1)
 				end
 				
 				print(upvalindex, reg[arg2], arg2, re)
-				retval = retval .. "--OPCODE CAPTURE UP".. upvalindex .. " reg " .. arg2
+				retval = retval .. "--OPCODE CAPTURE UP".. upvalindex .. " reg " .. arg2 .. " type " .. arg1
 				--here we go 2.0 :D
 				retval = "local UP".. upvalindex
 					.. " = "
@@ -906,7 +941,7 @@ function module.decompileluac(bytecode)
 				local funcname = "PROTO_"..string.sub(arg2,2)
 				--NEWCLOSURE R2 P0
 				reg[arg1] = "PROTO_"..string.sub(arg2,2)
-				retval = retval .. arg1 .. " = " .. funcname .. "()"
+				retval = retval .. arg1 .. " = " .. funcname
 			elseif op == "CLOSEUPVALS" then
 				noline = true
 			elseif op == "GETGLOBAL" then
@@ -939,6 +974,7 @@ function module.decompileluac(bytecode)
 				local arg2 = word[3]
 				local arg3 = word[4]
 				print(arg2)
+				reg[arg1] = "{}"
 				retval = retval ..  arg1 .. " = {}" -- yeah idc cuz it's not like luau uses this anyway. (the size part)
 			elseif op == "JUMP" then
 				local arg1 = word[2]
@@ -955,6 +991,7 @@ function module.decompileluac(bytecode)
 				local arg2 = word[3]
 				local arg3 = word[4]
 				--i suspect that arg2 or arg3 will be the table and other one is the value and the table and arg1 will be the updated table
+				reg[arg2][reg[arg3]] = reg[arg1]
 				retval = retval ..  arg2 .. " = {}"
 			
 			elseif op == "SETLIST" then
@@ -982,7 +1019,8 @@ function module.decompileluac(bytecode)
 			elseif op == "LENGTH" then
 				local arg1 = word[2]
 				local arg2 = word[3]
-				retval = retval .. "local ".. arg1 .." = " .. arg2
+				reg[arg1] = #arg2
+				retval = retval .. "local ".. arg1 .." = #" .. arg2
 			elseif op == "FASTCALL1" then
 				noline = true
 				--noline since our code already handles these calls
@@ -993,7 +1031,10 @@ function module.decompileluac(bytecode)
 ]]
 			elseif op == "FASTCALL" then
 				noline = true
-			
+			elseif op == "FASTCALL2" then
+				noline = true
+			elseif op == "FASTCALL3" then
+				noline = true
 			elseif op == "FORNPREP" then
 				local arg1 = word[2]
 				local regnumarg1 = string.sub(arg1,2,#arg1)
@@ -1003,6 +1044,7 @@ function module.decompileluac(bytecode)
 			elseif op == "MINUS" then
 				local arg1 = word[2]
 				local arg2 = word[3]
+				reg[arg1] = arg2
 				retval = retval .. arg1 .. " = -" .. arg2
 			elseif op == "SETUPVAL" then
 				local arg1 = word[2]
@@ -1015,8 +1057,8 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local arg3 = word[4]
+				reg[arg1] = reg[arg2][arg3]
 				retval = retval .. "local ".. arg1.. " = " .. arg2 .. "[" .. arg3 .. "]"
-			
 			else
 				retval = retval .. "--" .. line
 			end
