@@ -420,7 +420,6 @@ MAIN:
 --tool version 0.0.1
 ]]
 
-
 --decompiles predeserialized and preformatted bytecode
 @native --to make this fast as c++ :D idk actually
 function module.decompileluac(bytecode)
@@ -453,6 +452,14 @@ function module.decompileluac(bytecode)
 	local retval = [[
 ]]
 	print("lines:",#lines)
+	local function addlocal(valuetocheck:string)
+		warn(valuetocheck, reg[valuetocheck])
+		if reg[valuetocheck] == nil then
+			return "local "
+		else
+			return ""
+		end
+	end
 	for i, line in ipairs(lines) do
 		local word = string.split(line, " ")
 		local op = word[1]
@@ -499,8 +506,9 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local a = arg1
-				if arg2 ~= "0" then
-					for i=1, tonumber(arg2) do
+				local b = tonumber((string.gsub(arg2,"%D", "")))
+				if b > 1 then
+					for i=1, b do
 						a = a .. ", R" .. tostring(i)
 					end
 				end
@@ -511,20 +519,23 @@ function module.decompileluac(bytecode)
 				end
 			elseif op == "LOADNIL" then
 				local arg1 = word[2]
+				
+				retval = retval .."local " ..  arg1 .. " = nil"
 				reg[arg1] = "nil" -- cuz nil will break my code lol
-				retval = retval ..  arg1 .. " = nil"
 			elseif op == "LOADN" then
 				local arg1 = word[2]
 				local arg2 = word[3]
+				
+				retval = retval .. "local "  ..  arg1 .. " = " .. arg2
 				reg[arg1] = arg2
-				retval = retval ..  arg1 .. " = " .. arg2
 			elseif op == "LOADB" then
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local bool = (arg2 == "1")
+				
+				
+				retval = retval .. "local " ..  arg1 .. " = " .. tostring(bool)
 				reg[arg1] = bool
-				retval = retval ..  arg1 .. " = " .. tostring(bool)
-		
 			elseif op == "SETTABLEKS" then
 				local arg1 = word[2]
 				local arg2 = tostring(word[3])
@@ -561,7 +572,7 @@ function module.decompileluac(bytecode)
 					warn = true,
 					
 				}
-				
+				--importregistry[]
 				--print(string.sub(arg2,2,#arg2 - 1) == ("Enum" or "game" or "plugin" or "shared" or "script" or "workspace"), string.sub(arg2,2,#arg2 - 1))
 				if blacklist[val] then
 					reg[arg1] =  "IM"..string.sub(arg2,2,#arg2-1)
@@ -571,9 +582,10 @@ function module.decompileluac(bytecode)
 						noline = true
 				else
 					reg[arg1] =  "IM"..string.sub(arg2,2,#arg2-1) 
-					retval = retval ..  arg1 .. " = " .. string.sub(arg2,2,#arg2 - 1)
+					--retval = retval ..  arg1 .. " = " .. string.sub(arg2,2,#arg2 - 1)
 					requirebool = false
 					requirecall = ""
+					noline = true
 				end
 				
 			elseif op == "GETTABLEKS" then
@@ -581,9 +593,8 @@ function module.decompileluac(bytecode)
 				local arg2 = word[3]
 				local arg3 = word[5]
 				if requirebool ~= true then
-				
+					retval = retval .. addlocal(arg1) ..  arg1 .. " = " .. arg2 .. arg3
 					reg[arg1] =  "RT"..arg2 ..arg3 
-					retval = retval ..  arg1 .. " = " .. arg2 .. arg3
 				else
 					noline = true
 				end
@@ -606,14 +617,25 @@ function module.decompileluac(bytecode)
 			elseif op == "CALL" then
 				local rawA = word[2]:gsub("R",""):match("%d+")
 				local A = tonumber(rawA)
-				local B = tonumber(word[3]:match("%-?%d+")) -- arguments count + 1
+				local B = tonumber(word[3]:match("%-?%d")) -- arguments count + 1
 				local C = tonumber(word[4]:match("%-?%d+")) -- results count + 1
 
 				-- build arguments (normal/namecall only)
 				local args = {}
 				if B >= 1 then
 					for i = 1, B do
-						table.insert(args, "R" .. tostring(A + i))
+						local a =  "R" .. tostring(A + i)
+						local regen = reg[a]
+						print(regen,reg[ "R" .. tostring(A + i)], a, reg[a])
+						if reg[a] ~= nil and reg[a] ~= "nil" then
+							if not string.match(regen,"RT") and not string.match(regen,"IM") then
+							table.insert(args, reg[ "R" .. tostring(A + i)])
+						else
+							table.insert(args, regen:sub(3,#regen))
+							end
+						else
+							table.insert(args, "R" .. tostring(A + i))
+						end
 					end
 				elseif B == 0 then
 					table.insert(args, "") -- MULTRET
@@ -622,7 +644,7 @@ function module.decompileluac(bytecode)
 				-- base call string
 				local callStr
 				if requirebool then
-					-- Special handling for require
+					-- Special handling for require/print/warn/error
 					requirebool = false
 					callStr = importname .."(" .. requirecall .. ")"
 				elseif namecall then
@@ -631,12 +653,12 @@ function module.decompileluac(bytecode)
 					callStr = namecallstr .. "(" .. table.concat(args, ", ") .. ")"
 				else
 					-- Normal call
-					callStr = "R" .. A .. "(" .. table.concat(args, ", ") .. ")"
+					callStr = reg["R" .. A]:sub(3,# reg["R" .. A]).. "(" .. table.concat(args, ", ") .. ")"
 				end
 
 				-- Handle return values
 				if C == 1 then
-					retval = retval .. callStr
+					retval = retval .. "R" .. A .. " = " .. callStr .. " -- MULTRET"
 				elseif C == 2 then
 					retval = retval .. "R" .. A .. " = " .. callStr
 				elseif C > 2 then
@@ -650,7 +672,7 @@ function module.decompileluac(bytecode)
 				else
 					retval = retval .. callStr
 				end
-			
+				retval = retval .. "\n --" .. line
 
 
 			elseif line == "" then
@@ -677,22 +699,24 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local arg2 = word[4]    
 				arg2 = string.sub(arg2,2,#arg2 - 1)
-				retval = retval .. tostring(arg1) .. " = " .. arg2
+				retval = retval .. addlocal(arg1).. tostring(arg1) .. " = " .. arg2
 			elseif op == "DUPTABLE" then
 				local arg1 = word[2]
 				local arg2 = word[4]
 				local garb = #("DUPTABLE  "..arg1.. " [" .. word[3])
 				--DUPTABLE R1 K4 [{"getTheme", "isDarkerTheme", "themeChanged"}]
 				local tablea = string.sub(line,garb + 1,#line - 1)
+				
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. tablea
 				reg[arg1] = tablea
-				retval = retval ..  arg1 .. " = " .. tablea
 				--CONCAT
 			elseif op == "CONCAT" then
 				local arg1 = word[2]
 				local arg2 = word[3]  
 				local arg3 = word[4]  
+				
+				retval = retval .. addlocal(arg1) .. arg1 .. ' = ' .. arg2 .. ".." .. arg3
 				reg[arg1] =  arg2 .. arg3
-				retval = retval ..  arg1 .. ' = ' .. arg2 .. ".." .. arg3
 			elseif op == "LOADK" then
 				local arg1 = word[2]
 				local arg2 = word[4]
@@ -702,7 +726,7 @@ function module.decompileluac(bytecode)
 				local tablea = string.sub(line,garb,#line - 1)
 				reg[arg1] =  tablea --cant see type, if you try type() on it, it'd just return as string
 				if requirebool == false then
-				retval = retval ..  arg1 .. " = " .. tablea
+					retval = retval .. "local " ..  arg1 .. " = " .. tablea
 				else
 					requirecall = requirecall .. tablea
 				end
@@ -717,8 +741,9 @@ function module.decompileluac(bytecode)
 				local garb = #("SETGLOBAL "..arg1.. " as[" .. word[3])
 				--DUPTABLE R1 K4 [{"getTheme", "isDarkerTheme", "themeChanged"}]
 				local tablea = string.sub(line,garb,#line - 1)
-				reg[arg1] =  tablea --cant see type, if you try type() on it, it'd just return as string
+				
 				retval = retval .. '_G["'.. arg1 .. '"] = ' .. tablea
+				reg[arg1] =  tablea --cant see type, if you try type() on it, it'd just return as string
 			elseif op == "JUMPIFLT" then
 				local arg1 = word[2]
 				local arg2 = word[4]
@@ -817,38 +842,44 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local arg2 = tonumber(reg[word[4]])
 				local arg3 = tonumber(reg[word[3]])
+				
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " + " .. arg3
 				reg[arg1] = arg2 + arg3
-				retval = retval ..  arg1 .. " = " .. arg2 .. " + " .. arg3
 			elseif op == "SUB" then
 				local arg1 = word[2]
 				local arg2 = tonumber(reg[word[4]])
 				local arg3 = tonumber(reg[word[3]])
+				
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " - " .. arg3
 				reg[arg1] = arg2 - arg3
-				retval = retval ..  arg1 .. " = " .. arg2 .. " - " .. arg3
 			elseif op == "MUL" then
 				local arg1 = word[2]
 				local arg2 = tonumber(reg[word[4]])
 				local arg3 = tonumber(reg[word[3]])
+				
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " * " .. arg3
 				reg[arg1] = arg2 * arg3
-				retval = retval ..  arg1 .. " = " .. arg2 .. " * " .. arg3
 			elseif op == "DIV" then
 				local arg1 = word[2]
 				local arg2 = tonumber(reg[word[4]])
 				local arg3 = tonumber(reg[word[3]])
+			
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " / " .. arg3
 				reg[arg1] = arg2 / arg3
-				retval = retval ..  arg1 .. " = " .. arg2 .. " / " .. arg3
 			elseif op == "MOD" then
 				local arg1 = word[2]
 				local arg2 = tonumber(reg[word[4]])
 				local arg3 = tonumber(reg[word[3]])
+				
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " % " .. arg3
 				reg[arg1] = arg2 % arg3
-				retval = retval ..  arg1 .. " = " .. arg2 .. " % " .. arg3
 			elseif op == "POW" then
 				local arg1 = word[2]
 				local arg2 = tonumber(reg[word[4]])
 				local arg3 = tonumber(reg[word[3]])
+				
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " ^ " .. arg3
 				reg[arg1] = arg2 ^ arg3
-				retval = retval ..  arg1 .. " = " .. arg2 .. " ^ " .. arg3
 			elseif op == "ADDK" then
 				local arg1 = word[2]
 				local arg2 = tonumber(string.sub(word[5],2,#word[5]-1))
@@ -856,47 +887,47 @@ function module.decompileluac(bytecode)
 				
 				print(arg2, arg3, reg[arg3], line)
 				--reg[arg1] =  arg2 + tonumber(reg[arg3])
-				retval = retval ..  arg1 .. " = " .. arg2 .. " + " .. arg3
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " + " .. arg3
 			elseif op == "SUBK" then
 				local arg1 = word[2]
 				local arg2 = tonumber(string.sub(word[5],2,#word[5]-1))
 				local arg3 = tonumber(reg[word[3]])
 				--reg[arg1] =  arg2 - reg[arg3]
-				retval = retval ..  arg1 .. " = " .. arg2 .. " - " .. arg3
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " - " .. arg3
 			elseif op == "MULK" then
 				local arg1 = word[2]
 				local arg2 = tonumber(string.sub(word[5],2,#word[5]-1))
 				local arg3 = tonumber(reg[word[3]])
 				--reg[arg1] =  arg2 * reg[arg3]
-				retval = retval ..  arg1 .. " = " .. arg2 .. " * " .. arg3
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " * " .. arg3
 			elseif op == "DIVK" then
 				local arg1 = word[2]
 				local arg2 = tonumber(string.sub(word[5],2,#word[5]-1))
 				local arg3 = tonumber(reg[word[3]])
 				--reg[arg1] =  arg2 / reg[arg3]
-				retval = retval ..  arg1 .. " = " .. arg2 .. " / " .. arg3
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " / " .. arg3
 			elseif op == "MODK" then
 				local arg1 = word[2]
 				local arg2 = tonumber(string.sub(word[5],2,#word[5]-1))
 				local arg3 = tonumber(reg[word[3]])
 				--reg[arg1] =  arg2 % reg[arg3]
-				retval = retval ..  arg1 .. " = " .. arg2 .. " % " .. arg3
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " % " .. arg3
 			elseif op == "POWK" then
 				local arg1 = word[2]
 				local arg2 = tonumber(string.sub(word[5],2,#word[5]-1))
 				local arg3 = tonumber(reg[word[3]])
 				--reg[arg1] = arg2 ^ reg[arg3]
-				retval = retval ..  arg1 .. " = " .. arg2 .. " ^ " .. arg3
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " ^ " .. arg3
 			elseif op == "MOVE" then
 				local arg1 = word[2]
 				local arg2 = word[3]
 				reg[arg1] = reg[arg2]
-				retval = retval ..  arg1 .. " = " .. arg2 --simple as that :D
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 --simple as that :D
 			elseif op == "NOT" then
 				local arg1 = word[2]
 				local arg2 = word[3]
 				reg[arg1] = not arg2
-				retval = retval ..  arg1 .. " = not " .. arg2 --simple as that :D
+				retval = retval .. addlocal(arg1) ..  arg1 .. " = not " .. arg2 --simple as that :D
 			elseif op == "GETUPVAL" then
 				--here we go :D
 				local arg1 = word[2]
@@ -905,7 +936,7 @@ function module.decompileluac(bytecode)
 					funcvarsamt += 1
 					biggestindex = tonumber(arg2)
 				end
-				retval = retval ..  arg1 .. " = " .. "UP" .. tonumber(arg2) + initindex + 1
+				retval = retval .. addlocal(arg1) ..  arg1 .. " = " .. "UP" .. tonumber(arg2) + initindex + 1
 			elseif op == "CAPTURE" then
 				local arg1 = word[2]
 				local arg2 = word[3]
@@ -950,8 +981,9 @@ function module.decompileluac(bytecode)
 				local arg2 = word[3]
 				local funcname = "PROTO_"..string.sub(arg2,2)
 				--NEWCLOSURE R2 P0
+				
+				retval = retval .. addlocal(arg1) .. arg1 .. " = " .. funcname
 				reg[arg1] = "PROTO_"..string.sub(arg2,2)
-				retval = retval .. arg1 .. " = " .. funcname
 			elseif op == "CLOSEUPVALS" then
 				noline = true
 			elseif op == "GETGLOBAL" then
@@ -963,29 +995,29 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local arg3 = word[4]
-				retval = retval .. "local ".. arg1 .. " = " .. arg2 .. " // " .. arg3
+				retval = retval .. addlocal(arg1) .. arg1 .. " = " .. arg2 .. " // " .. arg3
 			elseif op == "IDIVK" then -- same above, but arg3 is a constant.
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local arg3 = string.sub(word[5], 2,#word[5]-1) 
-				retval = retval .. "local ".. arg1 .. " = " .. arg2 .. " // " .. arg3
+				retval = retval .. addlocal(arg1) .. arg1 .. " = " .. arg2 .. " // " .. arg3
 			elseif op == "SUBRK" then
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local arg3 = string.sub(word[5], 2,#word[5]-1) 
-				retval = retval .. "local ".. arg1 .. " = " .. arg2 .. " - " .. arg3
+				retval = retval .. addlocal(arg1) .. arg1 .. " = " .. arg2 .. " - " .. arg3
 			elseif op == "DIVRK" then --rk means register-constant
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local arg3 = string.sub(word[5], 2,#word[5]-1) 
-				retval = retval .. "local ".. arg1 .. " = " .. arg2 .. " / " .. arg3
+				retval = retval .. addlocal(arg1) .. arg1 .. " = " .. arg2 .. " / " .. arg3
 			elseif op == "NEWTABLE" then
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local arg3 = word[4]
 				print(arg2)
-				reg[arg1] = "{}"
-				retval = retval ..  arg1 .. " = {}" -- yeah idc cuz it's not like luau uses this anyway. (the size part)
+				retval = retval .. addlocal(arg1)..  arg1 .. " = {}" -- yeah idc cuz it's not like luau uses this anyway. (the size part)
+				reg[arg1] = "{}"	
 			elseif op == "JUMP" then
 				local arg1 = word[2]
 				local number = string.sub(arg1, 3, #arg1-1) -- 3 instead of 2 because of of the + character
@@ -1002,9 +1034,9 @@ function module.decompileluac(bytecode)
 				local arg3 = word[4]
 				--i suspect that arg2 or arg3 will be the table and other one is the value and the table and arg1 will be the updated table
 				--reg[arg2][reg[arg3]] = reg[arg1]
-				reg[arg2] = "{}"
-				retval = retval ..  arg2 .. " = {}"
-			
+				
+				retval = retval .. addlocal(arg1) ..  arg2 .. "[" .. arg3  .. "] = " .. arg1
+				--reg[arg2] = "{" .. reg[arg1] or arg1 .. "}"
 			elseif op == "SETLIST" then
 				-- A: table register
 				-- B: starting register of values
@@ -1031,7 +1063,7 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local arg2 = word[3]
 				reg[arg1] = #arg2
-				retval = retval .. "local ".. arg1 .." = #" .. arg2
+				retval = retval .. addlocal(arg1) .. arg1 .." = #" .. arg2
 			elseif op == "FASTCALL1" then
 				noline = true
 				--noline since our code already handles these calls
@@ -1058,7 +1090,7 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local arg2 = word[3]
 				reg[arg1] = arg2
-				retval = retval .. arg1 .. " = -" .. arg2
+				retval = retval .. addlocal(arg1) .. arg1 .. " = -" .. arg2
 			elseif op == "SETUPVAL" then
 				local arg1 = word[2]
 				local arg2 = word[3]
