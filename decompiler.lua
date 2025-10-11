@@ -450,11 +450,13 @@ function module.decompileluac(bytecode)
 	local requirecall = "" --my code doesnt work good with require for somereason and cuz doing it like this makes requires look cleaner
 	local requirebool = false --is require being used? (only really needed for CALL)
 	local importname = ""
+	local returnstatement = ""
+	local ismain = false
 	local retval = [[
 ]]
 	print("lines:",#lines)
 	local function addlocal(valuetocheck:string)
-		warn(valuetocheck, reg[valuetocheck])
+		--warn(valuetocheck, reg[valuetocheck])
 		if reg[valuetocheck] == nil then
 			return "local "
 		else
@@ -469,6 +471,11 @@ function module.decompileluac(bytecode)
 			if jumpindexes[ix] == 1 then
 				local nextline = line
 				local c = nextline.match(nextline," ")
+				if jumpindexes[ix] > 0 then
+					jumpindexes[ix] = jumpindexes[ix] - 1
+				else
+					jumpindexes[ix] = nil
+				end
 				if c and (nextline:split(" ")[1]:sub(1,6) == "JUMPIF" )then
 					iselseif = true
 					jumpindexes[ix] = 0
@@ -513,14 +520,26 @@ function module.decompileluac(bytecode)
 						a = a .. ", R" .. tostring(i)
 					end
 				end
+				if ismain == false then
 				if a == "R0" then
 					if arg2 == "0" then
-						retval = retval .. "return --register 0"
+						returnstatement =  "return --register 0"
+					else
+						returnstatement =  "return " .. a
+					end
+				else
+					returnstatement =  "return " .. a
+					end
+				else
+					if a == "R0" then
+						if arg2 == "0" then
+							retval = retval ..  "return --register 0"
+						else
+							retval = retval ..   "return " .. a
+						end
 					else
 						retval = retval .. "return " .. a
 					end
-				else
-					retval = retval .. "return " .. a
 				end
 			elseif op == "LOADNIL" then
 				local arg1 = word[2]
@@ -688,7 +707,7 @@ function module.decompileluac(bytecode)
 					
 					namecall = false
 					
-						callStr = --[[namecallstr .. ]]"(" .. table.concat(args, ", ") .. ")"
+						callStr = namecallstr .. "(" .. table.concat(args, ", ") .. ")"
 					
 				else
 					-- Normal call
@@ -727,12 +746,19 @@ function module.decompileluac(bytecode)
 					initindex += funcvarsamt
 					funcvarsamt = 0
 					biggestindex = 0
-				retval = retval .. "end --FUNCEND?"
-				funcend = false
+
+					for _ in pairs(jumpindexes) do
+						retval = retval .. "end\n"
+					end
+					jumpindexes = {}
+					retval = retval .. returnstatement
+					retval = retval .. "\n end --FUNCEND?"
+					funcend = false
 				end
 			elseif line == "MAIN:" then
 				skipline = true
 				noline = true
+				ismain = true
 				reg = {}
 				creg = {}
 			elseif line:match":" and line:match"PROTO_" then
@@ -748,7 +774,7 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local arg2 = word[4]    
 				arg2 = string.sub(arg2,2,#arg2 - 1)
-				retval = retval .. addlocal(arg1).. tostring(arg1) .. " = " .. arg2
+				retval = retval .. addlocal(arg1).. tostring(arg1) .. " = " .. arg2 .. "()"
 			elseif op == "DUPTABLE" then
 				local arg1 = word[2]
 				local arg2 = word[4]
@@ -902,18 +928,19 @@ function module.decompileluac(bytecode)
 			
 			elseif op == "ADD" then
 				local arg1 = word[2]
-				local arg2 = tonumber(reg[word[4]])
-				local arg3 = tonumber(reg[word[3]])
-				
-				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " + " .. arg3
-				reg[arg1] = arg2 + arg3
+				local arg2 = word[4]
+				local arg3 = word[3]
+				print(line,i)
+				--ADD R5 R6 R7 14
+				retval = retval .. addlocal(arg1) ..  arg1 .. " = " .. arg2 .. " + " .. arg3
+				reg[arg1] = arg2.. " + "..arg3
 			elseif op == "SUB" then
 				local arg1 = word[2]
 				local arg2 = tonumber(reg[word[4]])
 				local arg3 = tonumber(reg[word[3]])
 				
 				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " - " .. arg3
-				reg[arg1] = arg2 - arg3
+				reg[arg1] = reg[arg2] - reg[arg3]
 			elseif op == "MUL" then
 				local arg1 = word[2]
 				local arg2 = tonumber(reg[word[4]])
@@ -964,8 +991,8 @@ function module.decompileluac(bytecode)
 				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " * " .. arg3
 			elseif op == "DIVK" then
 				local arg1 = word[2]
-				local arg2 = tonumber(string.sub(word[5],2,#word[5]-1))
-				local arg3 = tonumber(reg[word[3]])
+				local arg2 = string.sub(word[5],2,#word[5]-1)
+				local arg3 = word[3]
 				--reg[arg1] =  arg2 / reg[arg3]
 				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 .. " / " .. arg3
 			elseif op == "MODK" then
@@ -1056,7 +1083,7 @@ function module.decompileluac(bytecode)
 				local funcname = "PROTO_"..string.sub(arg2,2)
 				--NEWCLOSURE R2 P0
 				
-				retval = retval .. addlocal(arg1) .. arg1 .. " = " .. funcname .. "()"
+				retval = retval .. addlocal(arg1) .. arg1 .. " = " .. funcname
 				reg[arg1] = "PROTO_"..string.sub(arg2,2)
 			elseif op == "CLOSEUPVALS" then
 				noline = true
@@ -1098,7 +1125,7 @@ function module.decompileluac(bytecode)
 				if iselse == true then
 					retval = retval .. "else --proven to be else"
 				else
-					retval = retval .. "break --could also be anything else"
+					retval = retval .. "--break maybe?? " .. line
 				end
 				--jumpindexes[i] = number + 1 --because this line will also remove 1 from this index
 				
@@ -1214,11 +1241,9 @@ function module.decompileluac(bytecode)
 							retval = retval .. "end\n"
 						--end
 					end
-					
 				end
-				if jumpindexes[ix] > 0 then
-					jumpindexes[ix] = jumpindexes[ix] - 1
-				end
+				
+				
 			end
 			iselseif = false
 		else
@@ -1228,7 +1253,7 @@ function module.decompileluac(bytecode)
 	retval = table.concat(ups,"\n") .. "\n" .. retval
 	retval = [[--!nonstrict
 --Created by ToastedSoup's tool "luaudecomp" 
---tool version 0.2.0
+--tool version 0.3.0
 --made with love <3
 ]]..retval
 	return retval
