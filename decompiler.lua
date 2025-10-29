@@ -454,15 +454,35 @@ function module.decompileluac(bytecode)
 	local retval = [[
 ]]
 	print("lines:",#lines)
-	local function addlocal(valuetocheck:string)
-		--warn(valuetocheck, reg[valuetocheck])
-		if reg[valuetocheck] == nil then
-			return "local "
-		else
-			return ""
+	local function strtotype(str:string)
+		if tonumber(str) then
+			return tonumber(str)
 		end
+		if str == "nil" or str == nil then
+			return nil
+		end
+		if str == "true"  or str == true then
+			return true
+		end
+		if str == "false"  or str == false then
+			return false
+		end
+		return str
+	end
+	local function isstr(x)
+		return (typeof(x) == string)
+	end
+	local function isnum(x)
+		return (typeof(x) == typeof(upvalindex))
+	end
+	local function isnil(x)
+		return (typeof(x) == nil)
+	end
+	local function isbool(x)
+		return (typeof(x) == typeof(ismain))
 	end
 	local function returnvalue(regi)
+		
 		if creg[regi] ~= nil then
 			if string.sub(tostring(creg[regi]),1,4) ~= "nil[" then
 				return tostring(creg[regi])
@@ -479,11 +499,24 @@ function module.decompileluac(bytecode)
 			return "nil"
 		end
 	end
+	local function addlocal(valuetocheck:string)
+		--warn(valuetocheck, reg[valuetocheck])
+		if strtotype(returnvalue(valuetocheck)) == nil then
+			return "local "
+		else
+			return ""
+		end
+	end
+	
 	for i, line in ipairs(lines) do
 		local word = string.split(line, " ")
 		local op = word[1]
 		
 		for ix, v in jumpindexes do
+				if i+1 == #lines then
+					jumpindexes[ix] = 0
+					retval = retval .. "end\n"
+				end
 			if jumpindexes[ix] == 1 then
 				local nextline = line
 				local c = nextline.match(nextline," ")
@@ -531,86 +564,83 @@ function module.decompileluac(bytecode)
 				local arg2 = word[3]
 				local a = arg1
 				local b = tonumber((string.gsub(arg2,"%D", "")))
-				if b > 1 then
-					for i=1, b do
-						a = a .. ", R" .. tostring(i)
-					end
-				end
-				local regs = string.split(a, ", ")
-				local hi = {}
-				
-
-				for i, v in ipairs(regs) do
-					if creg[v] == nil then
-						if reg[v] ~= nil then
-							hi[v] = reg[v]
-						else
-							hi[v] = v
+				local function mainthing()
+					if b > 1 then
+						for i=1, b do
+							a = a .. ", R" .. tostring(i)
 						end
-					else
-						hi[v] = creg[v]
 					end
-				end
-				local hiArray = {}
+					local regs = string.split(a, ", ")
+					local hiArray = {}
+					for _, v in pairs(regs) do
+						table.insert(hiArray, tostring(v))
+					end
 
-				for _, v in pairs(hi) do
-					table.insert(hiArray, tostring(v))
-				end
-
-				a = table.concat(hiArray, ", ")
-				print(a)
-				if ismain == false then
-					if a == "R0" then
-						if arg2 == "0" then
-							returnstatement =  "return --register 0"
+					a = table.concat(hiArray, ", ")
+					print(a)
+					if ismain == false then
+						if a == "R0" then
+							if arg2 == "0" then
+								returnstatement =  "return --register 0"
+							else
+								returnstatement =  "return " .. a
+							end
 						else
 							returnstatement =  "return " .. a
 						end
 					else
-						returnstatement =  "return " .. a
-					end
-				else
-					if a == "R0" then
-						if arg2 == "0" then
-							retval = retval ..  "return --register 0"
+						if a == "R0" then
+							if arg2 == "0" then
+								retval = retval ..  "return --register 0"
+							else
+								retval = retval ..   "return " .. a
+							end
 						else
-							retval = retval ..   "return " .. a
+							retval = retval .. "return " .. a
 						end
-					else
-						retval = retval .. "return " .. a
 					end
 				end
+				if jumpindexes == {} then
+					mainthing()
+				elseif lines[i+2] == not nil and not lines[i+2]:sub(#lines[i+1]-1) == ":" then
+					mainthing()
+				elseif i == #lines then
+					mainthing()
+				else
+					retval = retval .. "--this is a random return (from what i know)" 
+				end
+				
 			elseif op == "LOADNIL" then
 				local arg1 = word[2]
 				
-				retval = retval .."local " ..  arg1 .. " = nil"
+				retval = retval ..addlocal(arg1) ..  arg1 .. " = nil"
 				reg[arg1] = "nil" -- cuz nil will break my code lol
 				creg[arg1] = "nil"
 			elseif op == "LOADN" then
 				local arg1 = word[2]
 				local arg2 = word[3]
 				
-				retval = retval .. "local "  ..  arg1 .. " = " .. arg2
-				reg[arg1] = "nil"
-				creg[arg1] = "nil"
+				retval = retval .. addlocal(arg1)  ..  arg1 .. " = " .. arg2
+				reg[arg1] = arg2
+				creg[arg1] = arg2
 			elseif op == "LOADB" then
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local bool = (arg2 == "1")
 				
 				
-				retval = retval .. "local " ..  arg1 .. " = " .. tostring(bool)
+				retval = retval .. addlocal(arg1) ..  arg1 .. " = " .. tostring(bool)
 				reg[arg1] = bool
 				creg[arg1] = bool
 			elseif op == "SETTABLEKS" then
 				local arg1 = word[2]
 				local arg2 = tostring(word[3])
-				local arg3 = word[5]
+				local arg3 = '["'.. string.sub(line,line:find('%["')+2,#line-2)  .. '"]'
 				local convregarg2 = tostring(reg[arg2])
 				print(convregarg2)
 				if string.sub(convregarg2, 1,2) == "RT" or  string.sub(convregarg2, 1,2) == "IM" then --weird fix but ok
 					reg[arg1] =  "RT"..string.sub(reg[arg2], 3, #reg[arg2]) .. arg3
-					creg[arg1] =  "RT"..string.sub(reg[arg2], 3, #reg[arg2]) .. arg3
+					creg[arg1] =  string.sub(reg[arg2], 3, #reg[arg2]) .. arg3
 				elseif string.sub(convregarg2, 1,1) == "{" then
 					reg[arg1] = string.sub(arg3, 2, #arg3-1)
 					creg[arg1] = string.sub(arg3, 2, #arg3-1)
@@ -652,34 +682,55 @@ function module.decompileluac(bytecode)
 					--retval = retval ..  arg1 .. " = " .. string.sub(arg2,2,#arg2 - 1)
 					requirebool = false
 					requirecall = ""
-					noline = true
-					--retval = retval ..  arg1 .. " = " .. string.sub(arg2,2,#arg2 - 1)
+					--noline = true
+					retval = retval .. addlocal(arg1)..  arg1 .. " = " .. string.sub(arg2,2,#arg2 - 1)
 				end
 				
 			elseif op == "GETTABLEKS" then
 				local arg1 = word[2]
 				local arg2 = tostring(word[3])
-				local arg3 = tostring(word[5])
+				local arg3 = '["'.. string.sub(line,line:find('%["')+2,#line-2)  .. '"]'
+				local prtstr = ""
 				if requirebool ~= true then
 					print(arg2, i, line)
-					--retval = retval .. addlocal(arg1) ..  arg1 .. " = " .. creg[arg2] .. arg3
-					noline = true
-					reg[arg1] =  "RT"..arg2 ..arg3 
-					if creg ~= nil then
-						creg[arg1] =  tostring(creg[arg2]) ..arg3
-					elseif reg[arg2] ~= nil then
-						creg[arg1] =  tostring(reg[arg2])  ..arg3
-					else
-						creg[arg1] =  tostring(arg2) .. arg3
+					if isstr(creg[arg2]) then
+					if string.sub(creg[arg2], 1,8) ~= "require" then
+						reg[arg1] =  "RT"..arg2 ..arg3 
+						if creg ~= nil then
+							creg[arg1] =  tostring(creg[arg2]) ..arg3
+						elseif reg[arg2] ~= nil then
+							creg[arg1] =  tostring(reg[arg2])  ..arg3
+						else
+							creg[arg1] =  tostring(arg2) .. arg3
+						end
 					end
+					end
+					prtstr = addlocal(arg1) ..  arg1 .. " = " .. arg2 .. arg3
 				else
-					noline = true
+					
 					--retval = retval .. addlocal(arg1) ..  arg1 .. " = " .. creg[arg2] .. arg3
-					reg[arg1] =  "RT"..arg2 ..arg3 
-					creg[arg1] =  creg[arg2] ..arg3 
+					if isstr(creg[arg2]) then
+					if creg[arg2]:sub(1,8) ~= "require" then
+						reg[arg1] =  "RT"..arg2 ..arg3 
+						creg[arg1] =  creg[arg2] ..arg3
+						prtstr = addlocal(arg1) ..  arg1 .. " = " .. creg[arg2] .. arg3
+					else
+						reg[arg1] =  "RT"..arg2 ..arg3 
+						creg[arg1] =  arg2 ..arg3
+						prtstr = addlocal(arg1) ..  arg1 .. " = " .. arg2 .. arg3
+						end
+					else
+						reg[arg1] =  "RT"..arg2 ..arg3 
+						creg[arg1] =  arg2 ..arg3
+						prtstr = addlocal(arg1) ..  arg1 .. " = " .. arg2 .. arg3
+					end
 				end
 				--doesnt really matter if we do the check here
-				
+				if lines[i+1]:split(" ")[1] ~= "GETTABLEKS" or lines[i+1]:split(" ")[3] ~= arg1 then
+					retval = retval .. prtstr
+				else
+					noline = true
+				end
 				if requirecall == "" then
 					if creg[arg2] ~= nil then
 						requirecall = requirecall .. creg[arg2] .. arg3
@@ -697,7 +748,8 @@ function module.decompileluac(bytecode)
 				local source = word[3]:match("%d+")
 				local methodName = string.sub(word[5],3,#word[5]-2) or "UNKNOWN"
 				namecall = true
-				namecallstr = "R" .. source .. ":" .. methodName
+					namecallstr = "R" .. source .. ":" .. methodName
+				
 				noline = true
 
 			elseif op == "CALL" then
@@ -711,6 +763,9 @@ function module.decompileluac(bytecode)
 				local cregargs = {}
 				if B >= 1 then
 					for i = 1, B do
+						if i == 1 and reg[ "R" .. tostring(A + i)] == nil then
+							continue
+						end
 						local a =  "R" .. tostring(A + i)
 						local regen = tostring(reg[a])
 						print(regen,reg[ "R" .. tostring(A + i)], a, reg[a])
@@ -738,39 +793,48 @@ function module.decompileluac(bytecode)
 				end
 				-- base call string
 				local callStr
+				local regcallStr
 				if requirebool then
 					-- Special handling for require/print/warn/error
 					requirebool = false
 					if true --[[creg[args[1]]--[[ == nil]] then -- not doing extra checks for every other arguments
 						callStr = importname .."(" .. requirecall .. ")" --fallback if my code is acting weird
+						regcallStr = importname .."(" .. requirecall .. ")" --fallback if my code is acting weird
 					else
 						callStr = importname .."(" .. table.concat(cregargs, ", ") .. ")" -- this is weird
+						regcallStr = importname .."(" .. table.concat(cregargs, ", ") .. ")" -- this is weird
 					end
 					print(table.concat(args, ", "))
 				elseif namecall then
 					-- Method call
-					
 					namecall = false
-					
-						callStr = namecallstr .. "(" .. table.concat(args, ", ") .. ")"
-					
+					callStr = namecallstr .. "(" .. table.concat(args, ", ") .. ")"
+					regcallStr = namecallstr .. "(" .. table.concat(args, ", ") .. ")"
 				else
 					-- Normal call
-					if tostring(reg["R" .. A]) ~= "IMrequire" and string.sub(reg["R" .. A], 1, 6) ~= "script" then
-						print("R" .. A, i, line)
-						callStr = creg["R" .. A].. "(" .. table.concat(args, ", ") .. ")"
+					if isstr(reg["R" .. A]) then
+						if tostring(reg["R" .. A]) ~= "IMrequire" and string.sub(reg["R" .. A], 1, 6) ~= "script" then
+							print("R" .. A, i, line)
+							callStr = creg["R" .. A].. "(" .. table.concat(args, ", ") .. ")"
+							regcallStr = creg["R" .. A].. "(" .. table.concat(args, ", ") .. ")"
+						else
+							callStr = "R" .. A.. "(" .. table.concat(args, ", ") .. ")"
+							regcallStr = "R" .. A.. "(" .. table.concat(args, ", ") .. ")"
+						end
 					else
 						callStr = "R" .. A.. "(" .. table.concat(args, ", ") .. ")"
+						regcallStr = "R" .. A.. "(" .. table.concat(args, ", ") .. ")"
 					end
 				end
 
 				-- Handle return values
 				if C == 1 then
 					retval = retval .. "R" .. A .. " = " .. callStr .. " -- MULTRET"
-					creg["R" .. A] = callStr
+					creg["R" .. A] = regcallStr
 				elseif C == 2 then
 					retval = retval .. "R" .. A .. " = " .. callStr
-					creg["R" .. A] = callStr
+					creg["R" .. A] = regcallStr
+					
 				elseif C > 2 then
 					local rets = {}
 					for i = 0, C - 2 do
@@ -827,7 +891,7 @@ function module.decompileluac(bytecode)
 				--DUPTABLE R1 K4 [{"getTheme", "isDarkerTheme", "themeChanged"}]
 				local tablea = string.sub(line,garb + 1,#line - 1)
 				
-				retval = retval .. "local "..  arg1 .. " = " .. tablea
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. tablea
 				reg[arg1] = tablea
 				--CONCAT
 			elseif op == "CONCAT" then
@@ -835,8 +899,8 @@ function module.decompileluac(bytecode)
 				local arg2 = word[3]  
 				local arg3 = word[4]  
 				
-				retval = retval .. addlocal(arg1) .. arg1 .. ' = ' .. arg2 .. ".." .. arg3
-				reg[arg1] =  arg2 .. arg3
+				retval = retval .. addlocal(arg1) .. arg1 .. ' = ' .. arg2 .. " .. " .. arg3
+				reg[arg1] =  arg2 .. " .. " .. arg3
 			elseif op == "LOADK" then
 				local arg1 = word[2]
 				local arg2 = word[4]
@@ -847,9 +911,9 @@ function module.decompileluac(bytecode)
 				local garb = #("LOADK "..arg1.. " as[" .. word[3])
 				--DUPTABLE R1 K4 [{"getTheme", "isDarkerTheme", "themeChanged"}]
 				local tablea = string.sub(line,garb,#line - 1)
-				reg[arg1] =  tablea --cant see type, if you try type() on it, it'd just return as string
+				reg[arg1] =  tablea --i can finally detect what type (this is supposed to be) this is now :D using my own custom functions
 				if requirebool == false then
-					retval = retval .. "local " ..  arg1 .. " = " .. tablea
+					retval = retval .. addlocal(arg1) ..  arg1 .. " = " .. tablea
 				else
 					requirecall = requirecall .. tablea
 				end
@@ -1049,7 +1113,7 @@ function module.decompileluac(bytecode)
 			elseif op == "MOVE" then
 				local arg1 = word[2]
 				local arg2 = word[3]
-				retval = retval .. "local "..  arg1 .. " = " .. arg2 --simple as that :D
+				retval = retval .. addlocal(arg1)..  arg1 .. " = " .. arg2 --simple as that :D
 				if creg[arg2] ~= nil then
 					arg2 = creg[arg2]
 				end
@@ -1070,7 +1134,7 @@ function module.decompileluac(bytecode)
 				end
 				reg[arg1] = "UP" .. tonumber(arg2) + initindex + 1
 				creg[arg1] = "UP" .. tonumber(arg2) + initindex + 1
-				retval = retval .. "local " ..  arg1 .. " = " .. "UP" .. tonumber(arg2) + initindex + 1
+				retval = retval .. addlocal(arg1) ..  arg1 .. " = " .. "UP" .. tonumber(arg2) + initindex + 1
 			elseif op == "CAPTURE" then
 				local arg1 = word[2]
 				local arg2 = word[3]
@@ -1104,11 +1168,10 @@ function module.decompileluac(bytecode)
 				else
 					re = tostring(creg[arg2])
 				end
-				print(re)
+				print(re,string.sub(string.sub(arg2, 2, #arg2),3))
 				--print(tonumber(string.sub(re,3)))
-				if re ~= "" and re ~= nil and re ~= "nil" and string.sub(re,1,2) == "UP" then
-					if tonumber(string.sub(re,3)) >= upvalindex then
-				
+				if string.sub(arg2, 2, #arg2) ~= "" and string.sub(arg2, 2, #arg2) ~= nil and not string.match(re,"nil") and string.sub(re,1,2) == "UP"  then
+					if tonumber(string.sub(arg2, 2, #arg2)) >= upvalindex then
 					comment = comment .. ", compiled wrong. returning nil"
 						re = "nil"
 						end
@@ -1176,7 +1239,7 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local number = string.sub(arg1, 3, #arg1-1) -- 3 instead of 2 because of of the + character
 				if iselse == true then
-					retval = retval .. "else --proven to be else"
+					retval = retval .. "else --proven to be 'else'"
 				else
 					retval = retval .. "--break maybe?? " .. line
 				end
@@ -1189,7 +1252,7 @@ function module.decompileluac(bytecode)
 				--i suspect that arg2 or arg3 will be the table and other one is the value and the table and arg1 will be the updated table
 				--reg[arg2][reg[arg3]] = reg[arg1]
 				
-				retval = retval .. addlocal(arg1) ..  arg2 .. "[" .. arg3  .. "] = " .. arg1
+				retval = retval ..  arg2 .. "[" .. arg3  .. "] = " .. arg1
 				--reg[arg2] = "{" .. reg[arg1] or arg1 .. "}"
 			elseif op == "SETLIST" then
 				-- A: table register
@@ -1222,7 +1285,7 @@ function module.decompileluac(bytecode)
 				retval = retval .. addlocal(arg1) .. arg1 .." = #" .. arg2
 			elseif op == "FASTCALL1" then
 				noline = true
-				reg[word[3]] = word[2]:lower() .. "(" .. word[3] .. ")"
+				reg[word[3]] = word[2]:lower():gsub("_",".") .. "(" .. word[3] .. ")"
 				--noline since our code already handles these calls
 				--[[example:
  FASTCALL1 MATH_ABS R5 [+2] <-- +2 shows that this call will be called in 2 instructions
@@ -1259,16 +1322,17 @@ function module.decompileluac(bytecode)
 				local arg1 = word[2]
 				local arg2 = word[3]
 				local arg3 = word[4]
-				reg[arg1] = reg[arg2][arg3]
-				retval = retval .. "local ".. arg1.. " = " .. arg2 .. "[" .. arg3 .. "]"
+				retval = retval .. addlocal(arg1).. arg1.. " = " .. arg2 .. "[" .. arg3 .. "]"
+				print(line,i,reg[arg2], reg[arg3])
+				reg[arg1] = returnvalue(arg2) .. "[" .. returnvalue(arg3) .. "]"
 			elseif op == "BREAK" then
 				noline = true
 			elseif op == "GETGLOBAL" then
 				local arg1 = word[2]
 				local arg2 = string.sub(word[4],2, #word[4]-1)
-				retval = retval .. "local ".. arg1 .." = _G[" .. arg2 .. "]"
+				retval = retval .. addlocal(arg1).. arg1 .." = _G[" .. arg2 .. "]"
 			elseif op == "GETVARARGS" then
-				retval = retval .. "local " .. word[2] .. " = {...}"
+				retval = retval .. addlocal(arg1) .. word[2] .. " = {...}"
 			elseif op == "PREPVARARGS" then
 				noline = true
 			else
@@ -1285,10 +1349,14 @@ function module.decompileluac(bytecode)
 					newestif = ix
 				end
 			end]]
+			local nextline = lines[i+1]
+			local c
+			if nextline and string.match(nextline," ") then
+				c = string.split(nextline," ")
+			end
 			for ix, v in jumpindexes do
 				if jumpindexes[ix] == 1 then
-					local nextline = lines[i+1]
-					local c = nextline.match(nextline," ")
+					
 					if c and (nextline:split(" ")[1] == "JUMP" )then -- check if the next line has a space and then if so, check if the next line is a jump, and nothing else. so that normal ifstatements dont get caught up
 						iselse = true
 						jumpindexes[ix] = 0
