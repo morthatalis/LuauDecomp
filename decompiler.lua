@@ -471,9 +471,10 @@ function module.decompileluac(bytecode)
 		end
 		
 	end
+	local lastline = lines[#lines]
 	for i, line in ipairs(lines) do
 		--Table to string converter
-
+		local nextline = lines[i+1]
 
 		local function t2s(_t) --this was made in my "look cool because i made this unreadable" phase lmfao
 			local _l = "{}"
@@ -651,8 +652,6 @@ function module.decompileluac(bytecode)
 		local word = string.split(line, " ")
 		local op = word[1]
 		checkend(i)
-
-		
 		if skipline == false then
 			if op == "JUMPIFNOT" then
 				--aka if arg1 then
@@ -707,7 +706,10 @@ function module.decompileluac(bytecode)
 					if ismain == false then
 						if a == "R0" then
 							if arg2 == "0" then
-								returnstatement =  "return --register 0"
+								if nextline ~= "" and lastline ~= nextline then
+									print('"'..nextline..'"')
+									returnstatement =  "return --register 0"
+								end
 							else
 								returnstatement =  "return " .. a
 							end
@@ -717,8 +719,10 @@ function module.decompileluac(bytecode)
 					else
 						if a == "R0" then
 							if arg2 == "0" then
+								if nextline ~= "" and lastline ~= nextline then
 								tretval[i] = tretval[i] ..  "return --register 0"
-								-- = "return --register 0"
+									-- = "return --register 0"
+								end
 							else
 								tretval[i] = tretval[i] ..   "return " .. a
 								-- = "return " .. a
@@ -747,11 +751,11 @@ function module.decompileluac(bytecode)
 							b = true
 						end
 					end
-					if b == false then
+					if b == false and nextline ~= "" and lastline ~= nextline then
 						tretval[i] = tretval[i] .. "--this is a random return (from what i know)"
 					end
 					-- = "--this is a random return (from what i know)"
-				else
+				elseif lastline ~= nextline then
 					tretval[i] = tretval[i] .. "--this is a random return (from what i know)"
 				end
 
@@ -840,31 +844,7 @@ function module.decompileluac(bytecode)
 				local arg2 = tostring(word[3])
 				local rawarg3 = string.sub(line,line:find('%["')+2,#line-2)
 				local arg3 = '["'..  rawarg3 .. '"]'
-				local prtstr = ""
-				local methods = {
-					Clone                  = true,
-					FindFirstChild         = true,
-					FindFirstChildOfClass  = true,
-					FindFirstChildWhichIsA = true,
-					GetChildren            = true,
-					GetDescendants         = true,
-					IsAncestorOf           = true,
-					IsDescendantOf         = true,
-					WaitForChild           = true,
-					Destroy                = true,
-					GetFullName            = true,
-					-- AddTag / RemoveTag / HasTag / etc (if you consider CollectionService-tagging methods valid)
-					AddTag                 = true,
-					RemoveTag              = true,
-					HasTag                 = true,
-					GetTags                = true,
-					-- Additional base methods
-					IsA                    = true,
-					GetAttribute            = true,
-					GetAttributes           = true,
-					SetAttribute            = true,
-					GetAttributeChangedSignal = true,
-				}
+				local prtstr = ""--[[
 				local whitelist = {
 					-- Core Instance properties
 					Archivable = true,
@@ -881,20 +861,14 @@ function module.decompileluac(bytecode)
 					UniqueId = true,
 					DataCost = true,
 					Sandboxed = true,
-				}
+				}]]
 
 				if requirebool == false then
 					print(arg2, i, line)
 					--prtstr = addlocal(arg1) ..  arg1 .. " = " .. returnvalue(arg2) .. arg3
-					if whitelist[rawarg3] and not string.match(rawarg3, " ") then
+					if true then
 						reg[arg1] = "RT"..arg2  .. "." .. rawarg3
 						creg[arg1] = specialreturnvalue(arg2) .. "." .. rawarg3
-					elseif methods[rawarg3] and not string.match(rawarg3, " ") then
-						reg[arg1] = "RT"..arg2  .. ":" .. rawarg3
-						creg[arg1] = specialreturnvalue(arg2) .. ":" .. rawarg3
-					else
-						reg[arg1] = "RT"..arg2 ..arg3
-						creg[arg1] = specialreturnvalue(arg2) ..arg3
 					end
 				else
 						if creg[arg2]:sub(1,8) ~= "require" then
@@ -916,14 +890,14 @@ function module.decompileluac(bytecode)
 				end
 				if requirecall == "" then
 					if creg[arg2] ~= nil then
-						requirecall = requirecall .. creg[arg2] .. arg3
+						requirecall = requirecall .. creg[arg2] .. "." .. rawarg3
 					elseif reg[arg2] ~= nil  then
-						requirecall = requirecall .. reg[arg2] .. arg3
+						requirecall = requirecall .. reg[arg2] .. "." .. rawarg3
 					else
-						requirecall = requirecall .. arg2 .. arg3
+						requirecall = requirecall .. arg2 .. "." .. rawarg3
 					end
 				else
-					requirecall = requirecall .. arg3
+					requirecall = requirecall .. "." .. rawarg3
 				end
 			elseif op == "NAMECALL" then
 				-- A: target register, B: source register, AUX: constant table index (method name)
@@ -1012,16 +986,16 @@ function module.decompileluac(bytecode)
 				local rvstr = ""
 				-- Handle return values
 				if C == 1 then
-					if string.sub(namecallstr,string.find(namecallstr,':')+1,#namecallstr) == "GetService" and namecall == true then
+					if namecall == true and namecallstr ~= nil and string.find(namecallstr,':') and string.sub(namecallstr,string.find(namecallstr,':')+1,#namecallstr) == "GetService" then
 						rvstr =  "R" .. A .. " = " .. callStr .." -- MULTRET"
 						setvarname("R" .. A,string.sub(args[2],2,#args[2]-1))
 					else
 						rvstr =  "R" .. A .. " = " .. callStr .." -- MULTRET"
 					end
-					print(string.sub(namecallstr,string.find(namecallstr,':')+1,#namecallstr))
+					--print(string.sub(namecallstr,string.find(namecallstr,':')+1,#namecallstr))
 					creg["R" .. A] = callStr
 				elseif C == 2 then
-					if string.sub(namecallstr,string.find(namecallstr,':')+2,#namecallstr-1) == "GetService" and namecall == true then
+					if namecall == true and namecallstr ~= nil and string.sub(namecallstr,string.find(namecallstr,':')+2,#namecallstr-1) == "GetService" then
 						setvarname("R" .. A,string.sub(args[2],2,#args[2]-1))
 					else
 						rvstr =  "R" .. A .. " = " .. callStr
@@ -1572,6 +1546,7 @@ function module.decompileluac(bytecode)
 				funcsattribute[curfunc][2] = params
 			elseif op == "FORGLOOP" then
 				tretval[i] = tretval[i] .. "end\n"
+				forloopindent -= 1
 			elseif op == "FORGPREP_INEXT" then
 				local arg1 = word[2]
 				local rawa1 = tonumber(string.sub(arg1,2,#arg1)) + 6
@@ -1581,6 +1556,7 @@ function module.decompileluac(bytecode)
 				tretval[i] = tretval[i] .. "for ".. psarg1 ..", " .. psarg2 .. " in ".. creg["FORGLOOPINEXT"] .. " do"
 				forreg[psarg1] = true
 				forreg[psarg2] = true
+				forloopindent += 1
 			else
 				tretval[i] = tretval[i] .. "--" .. line
 			end
@@ -1604,7 +1580,6 @@ function module.decompileluac(bytecode)
 			else
 				noline = false
 			end
-				
 			
 			--local newestif = 0
 			--[[for ix, v in currentjumpindex do
